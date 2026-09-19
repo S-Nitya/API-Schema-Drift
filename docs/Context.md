@@ -172,7 +172,7 @@ For each run: select task → select drift type → activate condition (baseline
 > Keep this section updated as work progresses, so any agent picking up the project mid-stream knows exactly where things stand.
 
 - [x] Task 1.2 (in progress): Mock-tool pattern established — `mock_tools/crm_api.py` and `mock_tools/payment_api.py` built and smoke-tested. Each follows the SCHEMA → ground truth → handlers pattern. Chained CRM → Payment workflow test (`test_workflow_chain.py`) passes end-to-end.
-- [ ] Remaining for 1.2: Weather, Search, Email mock tools (same pattern).
+- [x] Task 1.2: Email, Weather, and Search mock tools built and smoke-tested (`mock_tools/email_api.py`, `mock_tools/weather_api.py`, `mock_tools/search_api.py`). Chained Search → Weather → Email workflow test (`test_email_weather_search_chain.py`) passes end-to-end.
 - [ ] Task 1.3: Drift-injection engine — not started.
 - [ ] Task 1.4: 10–15 task workflow suite — design drafted conversationally, not yet implemented as code.
 
