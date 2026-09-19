@@ -171,8 +171,16 @@ For each run: select task → select drift type → activate condition (baseline
 
 > Keep this section updated as work progresses, so any agent picking up the project mid-stream knows exactly where things stand.
 
-- [x] Task 1.2 (in progress): Mock-tool pattern established — `mock_tools/crm_api.py` and `mock_tools/payment_api.py` built and smoke-tested. Each follows the SCHEMA → ground truth → handlers pattern. Chained CRM → Payment workflow test (`test_workflow_chain.py`) passes end-to-end.
-- [x] Task 1.2: Email, Weather, and Search mock tools built and smoke-tested (`mock_tools/email_api.py`, `mock_tools/weather_api.py`, `mock_tools/search_api.py`). Chained Search → Weather → Email workflow test (`test_email_weather_search_chain.py`) passes end-to-end.
+- [x] Task 1.2: Mock-tool ecosystem fully built, reconciled, and integrated across all 5 mock tools (`mock_tools/crm_api.py`, `mock_tools/payment_api.py`, `mock_tools/email_api.py`, `mock_tools/weather_api.py`, `mock_tools/search_api.py`, and `mock_tools/__init__.py`).
+  - **Standardized Conventions Established**:
+    - **Contract**: Module-level `SCHEMA` dictionary defines endpoints with `request` (fields, types, required/optional, properties) and `response` contracts, evaluated dynamically at call time.
+    - **Ground Truth Isolation**: Private `_GROUND_TRUTH` dictionary separated from returned payloads using `copy.deepcopy` and `_extract_recognized_fields` (storing only schema-recognized fields to enable Silent Failure Rate evaluation under drift).
+    - **Uniform Responses**: Handlers return `{"status": "success", ...}` on success and `{"status": "error", "errors": ["..."]}` on failure.
+    - **Type & Field Standards**: IDs are `str` (`cust_...`, `tx_...`, `ref_...`, `msg_...`, `doc_...`), amounts/temperatures are `float`, timestamps are `int` unix epoch seconds.
+    - **Helpers & Exports**: Every module exposes `_validate()`, `_inspect_ground_truth()`, `_reset_ground_truth()`, and standalone smoke tests (`__main__`).
+  - **Test Verification**:
+    - Unified 5-tool chain: `test_all_tools_integration.py` (Search → CRM → Payment → Weather → Email) with error paths and ground truth assertions.
+    - Module smoke tests: standalone execution in each mock tool (`mock_tools/<tool>_api.py`).
 - [ ] Task 1.3: Drift-injection engine — not started.
 - [ ] Task 1.4: 10–15 task workflow suite — design drafted conversationally, not yet implemented as code.
 

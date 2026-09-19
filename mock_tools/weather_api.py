@@ -348,6 +348,11 @@ def _inspect_ground_truth() -> dict:
     return copy.deepcopy(_GROUND_TRUTH)
 
 
+def _reset_ground_truth() -> None:
+    """Resets the ground truth request log (test helper)."""
+    _GROUND_TRUTH["request_log"] = []
+
+
 # 6. Smoke test execution block.
 if __name__ == "__main__":
     print("=== Weather API Smoke Test ===")

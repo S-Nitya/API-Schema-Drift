@@ -258,6 +258,13 @@ def _inspect_ground_truth() -> dict:
     return copy.deepcopy(_GROUND_TRUTH)
 
 
+def _reset_ground_truth() -> None:
+    """Resets the ground truth state to initial empty state (test helper)."""
+    _GROUND_TRUTH["outbox"] = []
+    _GROUND_TRUTH["counter"] = 0
+    _GROUND_TRUTH["base_epoch"] = 1700000000
+
+
 # 6. Smoke test execution block.
 if __name__ == "__main__":
     print("=== Email API Smoke Test ===")
