@@ -96,12 +96,13 @@ Each mock tool has:
 - **Ground truth state** — private internal "real" data, separate from what's returned to the agent (essential for measuring Silent Failure Rate)
 - **Handlers** — the functions the agent actually calls; validate against SCHEMA, mutate ground truth, return a response
 
-**Five drift types the injection engine supports:**
-1. Field rename (`Phone` → `Phone_Number`)
-2. Data type change (dollars→cents, string→number)
-3. Required ↔ Optional field flip
-4. Nested ↔ Flat structure change
-5. Endpoint deprecation
+**Six drift types the injection engine supports:**
+1. Field rename (D1: e.g., `Phone` → `Phone_Number`)
+2. Response data format/type change (D2: e.g., timestamp → ISO string, float → string)
+3. Value meaning/unit change (D3: e.g., dollars → cents, m/s → km/h)
+4. Nested ↔ Flat structure change (D4)
+5. Silent null value (D5: e.g., response field becomes null)
+6. Endpoint deprecation with fallback data (D6: e.g., old endpoint answers with fallback payload)
 
 Drift is injected **between tasks at a controlled point**, not mid-task.
 
@@ -181,14 +182,18 @@ For each run: select task → select drift type → activate condition (baseline
   - **Test Verification**:
     - Unified 5-tool chain: `test_all_tools_integration.py` (Search → CRM → Payment → Weather → Email) with error paths and ground truth assertions.
     - Module smoke tests: standalone execution in each mock tool (`mock_tools/<tool>_api.py`).
-- [ ] Task 1.3: Drift-injection engine — not started.
+- [x] Task 1.3: Drift-injection engine fully built and verified (`drift_engine/__init__.py`, `drift_engine/drift_injector.py`, `test_drift_injector.py`).
+  - **Six-Type Taxonomy Implemented (D1-D6)**: D1 (Request Field Rename), D2 (Response Format/Type Change), D3 (Value Meaning/Unit Change), D4 (Nested <-> Flat Structure Change), D5 (Silent Null Value), D6 (Endpoint Deprecation with Fallback Data).
+  - **30-Cell Catalog & Zero Mock Edit Policy**: Applied across 5 mock tools (CRM, Payment, Weather, Search, Email) via dynamic `SCHEMA` patching and module-level handler wrapping without editing tool source files.
+  - **Call-as-Module-Attribute Rule**: Tools MUST be called as module attributes (e.g. `crm_api.create_customer(...)`) so dynamically wrapped handlers are invoked.
+  - **Full Test Verification**: All 30 catalog cells, silent failure demonstration, multi-tool stacking, mid-task guard, determinism, and post-reset regression suite passed (`python test_drift_injector.py`).
 - [ ] Task 1.4: 10–15 task workflow suite — design drafted conversationally, not yet implemented as code.
 
 ---
 
 ## 11. Ground Rules for Any AI Agent Working on This Project
 
-1. **Don't invent new strategies, metrics, or drift types.** Stick to the three strategies, five metrics, and five drift types defined above.
+1. **Don't invent new strategies, metrics, or drift types.** Stick to the three strategies, five metrics, and six drift types defined above.
 2. **Every mock tool must expose ground truth separately from its response** — this is non-negotiable, it's required for Silent Failure Rate.
 3. **Drift is injected between tasks, not mid-task**, unless explicitly told otherwise.
 4. **Don't silently "fix" or guess on ambiguous data** — that's exactly the failure mode this project studies. When unsure, flag it rather than resolving it quietly.
