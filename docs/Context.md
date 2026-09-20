@@ -185,9 +185,31 @@ For each run: select task → select drift type → activate condition (baseline
 - [x] Task 1.3: Drift-injection engine fully built and verified (`drift_engine/__init__.py`, `drift_engine/drift_injector.py`, `test_drift_injector.py`).
   - **Six-Type Taxonomy Implemented (D1-D6)**: D1 (Request Field Rename), D2 (Response Format/Type Change), D3 (Value Meaning/Unit Change), D4 (Nested <-> Flat Structure Change), D5 (Silent Null Value), D6 (Endpoint Deprecation with Fallback Data).
   - **30-Cell Catalog & Zero Mock Edit Policy**: Applied across 5 mock tools (CRM, Payment, Weather, Search, Email) via dynamic `SCHEMA` patching and module-level handler wrapping without editing tool source files.
+  - **Core API Surface (`DriftInjector`)**:
+    - `inject(drift_id: str, tool: str, allow_mid_task: bool = False) -> dict`: Injects specified drift on target tool; raises `MidTaskInjectionError`, `ConflictingDriftError`, or `InvalidDriftError`.
+    - `reset(ground_truth: bool = False) -> None`: Reverts all schemas, unwraps all handlers, clears active drifts, and optionally resets ground truth.
+    - `active_drifts() -> List[dict]`: Returns deep copy list of currently active drift records.
+    - `get_drift_log() -> List[dict]`: Returns deep copy of the cumulative injection log.
+    - `begin_task(label: str = "") -> None` / `end_task() -> None`: Enforces mid-task injection boundaries.
+    - `on_task_boundary(task_index: int) -> List[dict]`: Applies scheduled injections at task transitions.
   - **Call-as-Module-Attribute Rule**: Tools MUST be called as module attributes (e.g. `crm_api.create_customer(...)`) so dynamically wrapped handlers are invoked.
   - **Full Test Verification**: All 30 catalog cells, silent failure demonstration, multi-tool stacking, mid-task guard, determinism, and post-reset regression suite passed (`python test_drift_injector.py`).
-- [ ] Task 1.4: 10–15 task workflow suite — design drafted conversationally, not yet implemented as code.
+- [x] Task 1.4: Multi-step task workflow suite built and verified (`workflows/`, `test_workflows.py`).
+  - **12 Realistic Chained Workflows Implemented**:
+    1. `workflows/workflow_01_enterprise_onboarding.py` (W01): Onboard new enterprise client, charge setup fee, and send itemized invoice receipt (CRM -> Payment -> Email) [High stakes]
+    2. `workflows/workflow_02_event_refund_notification.py` (W02): Process weather-triggered outdoor event ticket refund and notify attendee (Search -> Payment -> Email) [High stakes]
+    3. `workflows/workflow_03_coastal_weather_safety.py` (W03): Evaluate Mumbai coastal concert weather conditions and send safety advisory to organizers (Search -> Weather -> Email) [Low stakes]
+    4. `workflows/workflow_04_venue_forecast_reminder.py` (W04): Check 3-day forecast for Delhi outdoor venue and schedule automated logistical reminder (Weather -> Email) [Low stakes]
+    5. `workflows/workflow_05_cancellation_email_refund.py` (W05): Inspect attendee email history for cancellation notice, look up customer record, and issue ticket refund (Email -> CRM -> Payment) [High stakes]
+    6. `workflows/workflow_06_vip_sponsorship_billing.py` (W06): Look up VIP ticketing policy, register VIP sponsor with revenue metadata, and charge package fee (Search -> CRM -> Payment) [High stakes]
+    7. `workflows/workflow_07_emergency_weather_bulletin.py` (W07): Audit active weather alerts in Bengaluru and distribute emergency evacuation bulletin (Weather -> Search -> Email) [High stakes]
+    8. `workflows/workflow_08_customer_address_update.py` (W08): Update customer contact profile with new address, send confirmation email, and verify queued dispatch (CRM -> Email -> Email) [Low stakes]
+    9. `workflows/workflow_09_equipment_weather_guidelines.py` (W09): Check Chennai current weather and retrieve equipment operational guidelines (Weather -> Search -> Search) [Low stakes]
+    10. `workflows/workflow_10_billing_audit_receipt.py` (W10): Audit customer communication history, fetch account profile, and verify transaction receipt (Email -> CRM -> Payment) [Low stakes]
+    11. `workflows/workflow_11_venue_contingency_planning.py` (W11): Evaluate Pune venue current conditions, multi-day forecast, and contingency guidelines (Weather -> Weather -> Search) [Low stakes]
+    12. `workflows/workflow_12_sponsor_booth_booking.py` (W12): Charge booth rental fee to registered sponsor, send confirmation email, and verify message delivery record (CRM -> Payment -> Email -> Email) [High stakes]
+  - **Master Registry & Exports**: `workflows/__init__.py` exposes `WORKFLOW_REGISTRY` and `ALL_WORKFLOWS` metadata descriptors consumed by Task 2.1 (agent loop) and Phase 5 (experiment grid).
+  - **Rigorous Ground-Truth Assertions**: `test_workflows.py` asserts step-level success and deep ground-truth mutations across all tools (CRM, Payment, Email, Weather, Search). Clean baseline execution verified across 100% of workflows.
 
 ---
 
