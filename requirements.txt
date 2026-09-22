@@ -1,0 +1,11 @@
+# Core UI & Visualization (Task 1.4 Dashboard)
+streamlit>=1.30.0
+
+# Schema Validation (Strategy B Gating)
+pydantic>=2.0.0
+
+# Experiment Logging & Analysis (Phase 4 / Evaluation)
+pandas>=2.0.0
+
+# Test Suite & Verification
+pytest>=7.0.0
