@@ -1,0 +1,212 @@
+================================================================================
+           API SCHEMA DRIFT DASHBOARD - TESTING & VERIFICATION GUIDE
+================================================================================
+
+1. QUICK ANSWER: DO YOU NEED TO EDIT THE REQUEST PAYLOAD?
+--------------------------------------------------------------------------------
+- NO (by default): The dashboard automatically pre-populates valid JSON payloads 
+  for every endpoint and drift scenario. You can simply click the buttons!
+- YES (for demonstration & evaluation): Editing the payload allows you to test:
+    1. Custom inputs (e.g., custom names, amounts, cities).
+    2. Input validation & error handling (e.g., missing required fields).
+    3. Adapting to Drift (e.g., sending old field name vs. new renamed field).
+
+
+================================================================================
+2. STEP-BY-STEP PAYLOAD DEMONSTRATIONS (COPY & PASTE EXAMPLES)
+================================================================================
+
+--------------------------------------------------------------------------------
+DEMO 1: TAB 1 — CUSTOM RECORD CREATION vs. VALIDATION ERROR
+--------------------------------------------------------------------------------
+Tool: CRM API
+Endpoint: create_customer
+
+Case 1A — Successful Custom Record:
+Replace the JSON in "Request Payload" with:
+```json
+{
+  "name": "Dr. Aris Thorne",
+  "email": "aris.thorne@quantum.tech",
+  "phone": "+91-9988776655",
+  "company": "Quantum Innovations",
+  "status": "active"
+}
+```
+Action: Click "Call Handler Live".
+Observation:
+- "Raw API Response" returns: status = "success" with a generated customer_id (e.g. "cust_0006").
+- "CRM Ground Truth State" updates on the right showing "cust_0006" stored inside `_customers`.
+
+Case 1B — Missing Required Field (Error Handling Demo):
+Replace the JSON with (missing required "name"):
+```json
+{
+  "email": "aris.thorne@quantum.tech",
+  "phone": "+91-9988776655"
+}
+```
+Action: Click "Call Handler Live".
+Observation:
+- "Raw API Response" turns RED: status = "error", errors = ["Missing required field: name"].
+
+
+--------------------------------------------------------------------------------
+DEMO 2: TAB 1 — PAYMENT CHARGE & REFUND
+--------------------------------------------------------------------------------
+Tool: Payment API
+Endpoint: create_charge
+
+Case 2A — Create Charge:
+```json
+{
+  "customer_id": "cust_0001",
+  "amount": 250.0,
+  "currency": "USD",
+  "description": "Enterprise Subscription Q4",
+  "payment_method": "card"
+}
+```
+Action: Click "Call Handler Live".
+Observation:
+- Returns `transaction_id` (e.g. "tx_0006") with status = "success".
+- Payment Ground Truth shows ledger balance updated.
+
+Case 2B — Refund the Charge:
+Switch Endpoint to: `refund_charge`
+Payload:
+```json
+{
+  "transaction_id": "tx_0001",
+  "amount": 50.0,
+  "reason": "customer_requested"
+}
+```
+Action: Click "Call Handler Live".
+Observation:
+- Returns refund confirmation with `refund_id`.
+
+
+--------------------------------------------------------------------------------
+DEMO 3: TAB 2 — DRIFT INJECTION & PAYLOAD ADAPTATION
+--------------------------------------------------------------------------------
+Tool: CRM API
+Drift Type: D1 — Request Field Rename (phone -> phone_number)
+
+Step 1: Baseline Clean Run
+Payload:
+```json
+{
+  "name": "Rahul Verma",
+  "email": "rahul@example.com",
+  "phone": "+91-9876543210"
+}
+```
+Action: Click "1. Run 'Before' (Clean)".
+Observation: Clean response on the left receives `phone: "+91-9876543210"`.
+
+Step 2: Inject Drift (Field Renamed by upstream API)
+Action: Click "2. Inject Drift".
+Observation:
+- Sidebar indicates active drift: `D1 on CRM` (field `phone` renamed to `phone_number` / `contact_phone`).
+- The Right Box ("AFTER") shows either validation error or dropped phone because the schema now expects `phone_number`.
+
+Step 3: Demonstrate Adaptation (Fix the Request Payload)
+Edit the JSON payload in Tab 2 to use the NEW schema field:
+```json
+{
+  "name": "Rahul Verma",
+  "email": "rahul@example.com",
+  "phone_number": "+91-9876543210"
+}
+```
+Action: Click "3. Run 'After' (Drifted)".
+Observation:
+- The call now succeeds under the drifted schema, proving the handler accepted the renamed field!
+
+Step 4: Clean Up
+Action: Click "Reset Tool" or sidebar "Reset Drifts".
+
+
+--------------------------------------------------------------------------------
+DEMO 4: TAB 3 — WORKFLOW RUNNER UNDER INJECTED DRIFTS (STEP-BY-STEP)
+--------------------------------------------------------------------------------
+Tab 3 executes multi-step chained workflows. Because all mock tool handlers are 
+shared in memory, any drift injected via Tab 2 or the Sidebar directly propagates 
+into Tab 3 workflow executions!
+
+Scenario 4A: Baseline Clean Workflow Run (No Drift)
+1. In Sidebar, click "Reset Drifts" to ensure Nominal State.
+2. Go to "Tab 3 — Workflow Runner".
+3. Select: "W01: Onboard new enterprise client, charge setup fee, and send itemized invoice receipt".
+4. Click "Run Workflow".
+5. Expected Result:
+   - Green banner: "Workflow Execution Succeeded: Onboard new enterprise client...".
+   - Step 1 (CRM create_customer) -> SUCCESS (creates customer_id).
+   - Step 2 (Payment charge_customer) -> SUCCESS (charges setup fee).
+   - Step 3 (Email send_email) -> SUCCESS (sends invoice receipt).
+   - All participating tools (CRM, Payment, Email) show synchronized Ground Truth records.
+
+Scenario 4B: Schema-Breaking Drift (D1 on CRM breaking W01 at Step 1)
+1. Go to "Tab 2 — Drift Engine Playground":
+   - Select Target Tool: "CRM API"
+   - Select Drift Type: "D1 — Request Field Rename"
+   - Click "2. Inject Drift"
+2. Notice the Sidebar now shows: "1 Active Drift(s) Injected: D1 on CRM".
+3. Switch to "Tab 3 — Workflow Runner":
+   - Select Workflow: "W01".
+   - Click "Run Workflow".
+4. Expected Result:
+   - Red banner: "Workflow Execution Error".
+   - Step 1 Accordion opens in RED: `Step 1: CRM -> create_customer (ERROR)`.
+   - Error trace shows: `Missing required field: phone_number` (because W01 sends legacy `phone`).
+   - Steps 2 & 3 (Payment & Email) are safely prevented from executing, protecting the system from cascading corruption.
+
+Scenario 4C: Semantic Value / Unit Drift (D3 on Payment in W01 / W06)
+1. Go to "Tab 2 — Drift Engine Playground":
+   - Target Tool: "Payment API"
+   - Drift Type: "D3 — Value Meaning/Unit Change"
+   - Click "2. Inject Drift"
+2. Switch to "Tab 3 — Workflow Runner":
+   - Select Workflow: "W01".
+   - Click "Run Workflow".
+3. Expected Result:
+   - Workflow completes, but the Payment charge amount is interpreted in cents instead of dollars (or vice versa).
+   - Expanding "Payment Ground Truth State" demonstrates the silent semantic ledger drift!
+
+Scenario 4D: Silent Null Drift (D5 on Search breaking W02 Event Ticket Refund)
+1. Go to "Tab 2 — Drift Engine Playground":
+   - Target Tool: "Search API"
+   - Drift Type: "D5 — Silent Null Response"
+   - Click "2. Inject Drift"
+2. Switch to "Tab 3 — Workflow Runner":
+   - Select Workflow: "W02: Process weather-triggered outdoor event ticket refund...".
+   - Click "Run Workflow".
+3. Expected Result:
+   - Search returns null results silently.
+   - W02 cannot find the cancellation policy document, halting the automatic refund sequence safely.
+
+Scenario 4E: Full Recovery to Nominal
+1. In Sidebar, click "Reset Drifts" and "Reset Ground Truth".
+2. Return to "Tab 3" and click "Run Workflow".
+3. Expected Result:
+   - Returns to full GREEN "Workflow Execution Succeeded".
+
+
+================================================================================
+3. SIDEBAR CONTROLS & MONITOR
+================================================================================
+1. "Drift Monitor": Live inspection of injected drift IDs, affected endpoints, 
+   field changes, and whether the drift is schema-visible or silent.
+2. "Reset Drifts": Instantly restores all API contracts and unwraps patched handlers.
+3. "Reset Ground Truth": Resets all in-memory dictionaries and seed databases.
+
+
+================================================================================
+4. RUNNING TESTS VIA CLI
+================================================================================
+> pytest test_workflows.py -v
+> pytest test_drift_injector.py -v
+> pytest test_all_tools_integration.py -v
+> pytest -v
+================================================================================
