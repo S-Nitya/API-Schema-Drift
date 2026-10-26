@@ -304,6 +304,7 @@ def test_determinism() -> None:
 
     assert log1 == log2, f"Logs differ across runs: {log1} != {log2}"
     print("  [PASS] Identical drift injection logs produced across separate runs.")
+    inj2.reset(ground_truth=True)
 
 
 def test_post_reset_regression() -> None:

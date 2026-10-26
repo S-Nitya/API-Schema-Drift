@@ -35,6 +35,8 @@ class UnknownToolError(Exception):
     pass
 
 
+import importlib
+
 # Map tool names to modules
 _TOOL_MODULES = {
     "crm": crm_api,
@@ -42,6 +44,19 @@ _TOOL_MODULES = {
     "weather": weather_api,
     "search": search_api,
     "email": email_api,
+}
+
+# Reload each module if imported while drifted to ensure true pristine state
+for _t_name, _t_mod in list(_TOOL_MODULES.items()):
+    if "Phone_Number" in _t_mod.SCHEMA.get("endpoints", {}).get("create_customer", {}).get("request", {}):
+        _TOOL_MODULES[_t_name] = importlib.reload(_t_mod)
+
+_GOLDEN_ORIGINAL_SCHEMAS = {
+    t: copy.deepcopy(mod.SCHEMA) for t, mod in _TOOL_MODULES.items()
+}
+_GOLDEN_ORIGINAL_HANDLERS = {
+    t: {ep: getattr(mod, ep) for ep in mod.SCHEMA["endpoints"] if hasattr(mod, ep)}
+    for t, mod in _TOOL_MODULES.items()
 }
 
 
@@ -819,16 +834,11 @@ class DriftInjector:
         self._schedule = schedule or {}
         self._tools = dict(_TOOL_MODULES)
 
-        # Store initial snapshots of original schemas and handlers
-        self._original_schemas: Dict[str, dict] = {}
-        self._original_handlers: Dict[str, Dict[str, Callable]] = {}
-
-        for tool_name, module in self._tools.items():
-            self._original_schemas[tool_name] = copy.deepcopy(module.SCHEMA)
-            self._original_handlers[tool_name] = {}
-            for ep in module.SCHEMA["endpoints"]:
-                if hasattr(module, ep):
-                    self._original_handlers[tool_name][ep] = getattr(module, ep)
+        # Store initial snapshots of original schemas and handlers from golden standards
+        self._original_schemas = copy.deepcopy(_GOLDEN_ORIGINAL_SCHEMAS)
+        self._original_handlers = {
+            t: dict(handlers) for t, handlers in _GOLDEN_ORIGINAL_HANDLERS.items()
+        }
 
         self._active_drifts: List[dict] = []
         self._drift_log: List[dict] = []
@@ -1006,11 +1016,11 @@ class DriftInjector:
     def reset(self, ground_truth: bool = False) -> None:
         """Resets all tools to pre-injection original state."""
         for tool_name, module in self._tools.items():
-            # Restore original SCHEMA
-            module.SCHEMA = copy.deepcopy(self._original_schemas[tool_name])
+            # Restore original SCHEMA from golden standard
+            module.SCHEMA = copy.deepcopy(_GOLDEN_ORIGINAL_SCHEMAS[tool_name])
 
             # Restore original handlers and remove any *_v2 attributes
-            for ep, orig_h in self._original_handlers[tool_name].items():
+            for ep, orig_h in _GOLDEN_ORIGINAL_HANDLERS[tool_name].items():
                 setattr(module, ep, orig_h)
                 v2_name = f"{ep}_v2"
                 if hasattr(module, v2_name):

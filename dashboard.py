@@ -19,10 +19,16 @@ import mock_tools.email_api as email_api
 import mock_tools.payment_api as payment_api
 import mock_tools.search_api as search_api
 import mock_tools.weather_api as weather_api
+import agent_dashboard
 from drift_engine.drift_injector import DRIFT_CATALOG, DriftInjector
+import contracts
 from mitigation.base import Action, PreCallResult
 from mitigation.strategy_a import SchemaDiffCaching, compute_schema_hash
-from workflows import ALL_WORKFLOWS, WORKFLOW_REGISTRY
+from workflows import WORKFLOW_REGISTRY
+import agent.agent_loop
+import agent.tool_caller
+import agent.event_log
+
 
 # Page configuration
 st.set_page_config(
@@ -34,7 +40,7 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 # Global State & Injector Initialization
 # -----------------------------------------------------------------------------
-if "injector" not in st.session_state:
+if "injector" not in st.session_state or "Phone_Number" in getattr(st.session_state.injector, "_original_schemas", {}).get("crm", {}).get("endpoints", {}).get("create_customer", {}).get("request", {}):
     st.session_state.injector = DriftInjector()
 
 if "strategy_a" not in st.session_state:
@@ -190,12 +196,12 @@ with st.sidebar:
     st.subheader("Global Reset Controls")
     col_r1, col_r2 = st.columns(2)
     with col_r1:
-        if st.button("Reset Drifts", use_container_width=True, help="Reverts all schemas and unwraps handlers back to nominal"):
+        if st.button("Reset Drifts", width="stretch", help="Reverts all schemas and unwraps handlers back to nominal"):
             injector.reset(ground_truth=False)
             st.toast("Active drifts reset to normal.")
             st.rerun()
     with col_r2:
-        if st.button("Reset Ground Truth", use_container_width=True, help="Resets ground truth fixtures across all tools"):
+        if st.button("Reset Ground Truth", width="stretch", help="Resets ground truth fixtures across all tools"):
             for t_info in TOOLS.values():
                 t_info["module"]._reset_ground_truth()
             injector.reset(ground_truth=True)
@@ -416,13 +422,13 @@ with tab2:
 
     col_act1, col_act2, col_act3, col_act4 = st.columns(4)
     with col_act1:
-        run_before_btn = st.button("1. Run 'Before' (Clean)", key="tab2_run_before", use_container_width=True)
+        run_before_btn = st.button("1. Run 'Before' (Clean)", key="tab2_run_before", width="stretch")
     with col_act2:
-        inject_btn = st.button("2. Inject Drift", type="primary", key="tab2_inject_btn", use_container_width=True)
+        inject_btn = st.button("2. Inject Drift", type="primary", key="tab2_inject_btn", width="stretch")
     with col_act3:
-        run_after_btn = st.button("3. Run 'After' (Drifted)", key="tab2_run_after", use_container_width=True)
+        run_after_btn = st.button("3. Run 'After' (Drifted)", key="tab2_run_after", width="stretch")
     with col_act4:
-        reset_playground_btn = st.button("Reset Tool", key="tab2_reset_btn", use_container_width=True)
+        reset_playground_btn = st.button("Reset Tool", key="tab2_reset_btn", width="stretch")
 
     if "playground_before_res" not in st.session_state:
         st.session_state["playground_before_res"] = None
@@ -530,7 +536,7 @@ with tab3:
     with col_wf3:
         st.markdown(f"**Drift Exposure:** `{', '.join(wf_info['drift_exposure'])}`")
     with col_wf4:
-        run_wf_btn = st.button("Run Workflow", type="primary", key="tab3_run_btn", use_container_width=True)
+        run_wf_btn = st.button("Run Workflow", type="primary", key="tab3_run_btn", width="stretch")
 
     st.divider()
 
@@ -601,15 +607,251 @@ with tab3:
 
 
 # =============================================================================
-# TAB 4: AGENT LOOP (RESERVED)
+# TAB 4: AGENT LOOP DEMO
 # =============================================================================
 with tab4:
-    st.subheader("Tab 4 — Agent Loop")
-    st.info(
-        "🤖 **Agent Loop Module Reserved**\n\n"
-        "This tab is reserved for the Agent Loop (multi-step task decomposition, planning, "
-        "dynamic schema reading, request building, and step sequencing)."
+    st.subheader("Agent Loop Demo")
+    st.markdown(
+        "This demo showcases how an agent handles API drift. It follows three possible flows:\n"
+        "1. **Success**: API is clean → Request matches → Data stored.\n"
+        "2. **Silent Failure**: API drifts → Agent sends old field → API ignores it → **Data lost**.\n"
+        "3. **Repair**: API drifts → Strategy detects it → Agent rebuilds request → **Data preserved**."
     )
+
+    # --- Internal Demo Strategy ---
+    class demo_phone_repair(contracts.MitigationStrategy):
+        """scripted demo stand-in, NOT Strategy A"""
+        name = "demo_phone_repair"
+
+        def pre_call(self, tool: str, endpoint: str, request: Dict) -> contracts.PreCallResult:
+            if tool != "crm":
+                return contracts.PreCallResult(action=contracts.Action.PROCEED)
+
+            caller = agent.tool_caller.ToolCaller()
+            live_schema = caller.get_schema(tool)
+            ep_schema = live_schema.get("endpoints", {}).get(endpoint, {})
+            req_contract = ep_schema.get("request", {})
+
+            if "phone" in request and "phone" not in req_contract:
+                for live_field in req_contract:
+                    if "phone" in live_field.lower():
+                        new_req = copy.deepcopy(request)
+                        new_req[live_field] = new_req.pop("phone")
+                        return contracts.PreCallResult(
+                            action=contracts.Action.REBUILD,
+                            rebuilt_request=new_req,
+                            new_schema=live_schema,
+                            field_mapping={"phone": live_field},
+                            reason=f"Field 'phone' drifted to '{live_field}'"
+                        )
+            return contracts.PreCallResult(action=contracts.Action.PROCEED)
+
+        def reset(self) -> None: pass
+        def stats(self) -> Dict: return {}
+
+    # --- Simplified Controls ---
+    st.divider()
+    col_ctrl1, col_ctrl2 = st.columns(2)
+    with col_ctrl1:
+        drift_mode = st.radio(
+            "1. API State",
+            options=["Clean baseline", "D1 CRM field-rename drift"],
+            key="tab4_drift_mode"
+        )
+    with col_ctrl2:
+        repair_enabled = st.checkbox("2. Enable Repair Strategy", value=False, key="tab4_repair_enabled")
+
+    run_demo_btn = st.button("Run Agent Demo", type="primary", width="stretch")
+
+    if run_demo_btn:
+        import importlib
+        for _m in [crm_api, payment_api, weather_api, search_api, email_api]:
+            importlib.reload(_m)
+        injector = DriftInjector()
+        st.session_state.injector = injector
+        injector.reset(ground_truth=True)
+
+        planner = agent_dashboard.W01ScriptedPlanner()
+        builder = agent_dashboard.W01ScriptedRequestBuilder()
+        strategy = demo_phone_repair() if repair_enabled else contracts.NoOpMitigation()
+        caller = agent.tool_caller.ToolCaller()
+        log = agent.event_log.EventLog()
+
+        agent_instance = agent.agent_loop.Agent(
+            planner=planner, builder=builder, strategy=strategy,
+            caller=caller, log=log, injector=injector
+        )
+
+        agent_instance.read_schemas(["crm", "payment", "email"])
+        snapshot_crm = copy.deepcopy(agent_instance.memory.get("crm"))
+
+        live_crm_schema = None
+        if drift_mode == "D1 CRM field-rename drift":
+            injector.inject("D1", "crm", allow_mid_task=True)
+            live_crm_schema = caller.get_schema("crm")
+
+        result = agent_instance.run_task("Onboard a new enterprise customer: create the CRM record, charge them, and email a receipt.")
+        import mock_tools.crm_api as crm_api
+        crm_gt = crm_api._inspect_ground_truth()
+
+        st.session_state["tab4_last_run"] = {
+            "result": result, "log": log.all(), "snapshot_crm": snapshot_crm,
+            "live_crm_schema": live_crm_schema, "crm_gt": crm_gt,
+            "strategy_name": strategy.name, "drift_mode": drift_mode, "repair_enabled": repair_enabled
+        }
+        injector.reset(ground_truth=True)
+        st.rerun()
+
+    # --- Simplified Display ---
+    run_data = st.session_state.get("tab4_last_run")
+    if run_data:
+        res = run_data["result"]
+        events = run_data["log"]
+
+        # Verify if the sent phone actually reached the CRM
+        sent_phone = "+1-555-0199"
+        customer_found = False
+        phone_stored = False
+        if run_data["crm_gt"].get("customers"):
+            for cid, data in run_data["crm_gt"]["customers"].items():
+                customer_found = True
+                if any(str(v) == sent_phone for v in data.values()):
+                    phone_stored = True
+                    break
+
+        silent_failure = (run_data["drift_mode"] == "D1 CRM field-rename drift" and
+                          not run_data["repair_enabled"] and
+                          res.reported_success and
+                          not phone_stored)
+
+        # 1. The Banner
+        if silent_failure:
+            st.warning("The agent says it succeeded, but the phone number was NOT saved.")
+        elif run_data["repair_enabled"] and any(e["kind"] == "request_rebuilt" for e in events):
+            st.success("The system noticed the API changed, fixed the request, and the phone number was saved.")
+        elif res.reported_success and phone_stored:
+            st.success("Task completed and the customer's phone number was saved.")
+        elif res.status != "completed":
+            st.error(f"Run failed: {res.reason}")
+        else:
+            st.info("Run completed with an unexpected result.")
+
+        # 2. Key Metrics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Status", res.status)
+        m2.metric("Agent reports success", str(res.reported_success))
+        m3.metric("API calls made", res.tool_calls)
+        m4.metric("Strategy", run_data["strategy_name"])
+        st.caption("LLM calls: 0")
+
+        # 3. Legend
+        st.markdown("The agent learned the API once, before it changed. Highlighted rows show what drifted.")
+        st.markdown("🟥 problem &nbsp;&nbsp; 🟨 changed &nbsp;&nbsp; 🟩 ok")
+
+        # 4. Two-Sided Table View
+        col_left, col_right = st.columns(2)
+
+        # --- LEFT COLUMN: WHAT AGENT EXPECTS / SENDS ---
+        with col_left:
+            st.markdown("**What the agent expects / sends**")
+
+            snap_schema = run_data["snapshot_crm"].get("endpoints", {}).get("create_customer", {}).get("request", {})
+            if run_data["live_crm_schema"]:
+                live_contract = run_data["live_crm_schema"].get("endpoints", {}).get("create_customer", {}).get("request", {})
+            else:
+                live_contract = snap_schema
+
+            crm_step = next((s for s in reversed(res.steps) if s.tool == "crm"), None)
+            sent_req = crm_step.request if crm_step else {}
+
+            standard_fields = ["name", "email", "phone", "company", "address", "status"]
+            left_html = '<table style="width:100%; border-collapse:collapse; font-size:0.8rem; color:white; border:1px solid #444;">'
+            for f in standard_fields:
+                val = sent_req.get(f, "—")
+                if f == "phone" and (val is None or val == "—"):
+                    val = sent_req.get("Phone_Number", "—")
+
+                if isinstance(val, dict):
+                    val = ", ".join([f"{v}" for v in val.values()])
+
+                bg = "#2e6b2e" if (val and val != "—") else "transparent"
+                note = ""
+                if f == "phone":
+                    if run_data["repair_enabled"] and any(e["kind"] == "request_rebuilt" for e in events):
+                        bg = "#2e6b2e"
+                        note = "fixed: phone → Phone_Number"
+                    elif f not in live_contract:
+                        bg = "#bda030"
+                        note = f"API now calls this {next((lf for lf in live_contract if 'phone' in lf.lower()), 'unknown')}"
+                    elif phone_stored:
+                        bg = "#2e6b2e"
+
+                left_html += f'<tr style="background-color:{bg};"><td style="padding:4px; border:1px solid #444; width:30%;">{f}</td><td style="padding:4px; border:1px solid #444;">{val} {f"<span style=\'font-size:0.7rem; opacity:0.8;\'>({note})</span>" if note else ""}</td></tr>'
+            left_html += '</table>'
+            st.markdown(left_html, unsafe_allow_html=True)
+
+        # --- RIGHT COLUMN: WHAT SYSTEM SAVED ---
+        with col_right:
+            st.markdown("**What the system actually saved (CRM)**")
+            gt_customers = run_data["crm_gt"].get("customers", {})
+            if not gt_customers:
+                st.info("No records stored in CRM.")
+            else:
+                cid = list(gt_customers.keys())[-1]
+                record = gt_customers[cid]
+                clean_record = {k: v for k, v in record.items() if k not in ["_counter", "base_epoch"]}
+
+                right_html = '<table style="width:100%; border-collapse:collapse; font-size:0.8rem; color:white; border:1px solid #444;">'
+                standard_fields = ["name", "email", "phone", "company", "address", "status"]
+
+                for f in standard_fields:
+                    val = clean_record.get(f)
+                    if f == "phone" and val is None:
+                        val = clean_record.get("Phone_Number")
+
+                    if isinstance(val, dict):
+                        val = ", ".join([f"{v}" for v in val.values()])
+
+                    bg = "#2e6b2e" if (val is not None and val != "—") else "transparent"
+                    if f == "phone":
+                        if val is None or not phone_stored:
+                            bg = "#8b2626"
+                            val = "— not saved —"
+                        else:
+                            bg = "#2e6b2e"
+
+                    right_html += f'<tr style="background-color:{bg};"><td style="padding:4px; border:1px solid #444; width:30%;">{f}</td><td style="padding:4px; border:1px solid #444;">{val if val is not None else "—"}</td></tr>'
+
+                right_html += f'<tr style="font-size:0.7rem; opacity:0.6;"><td style="padding:2px; border:1px solid #444;">ID</td><td style="padding:2px; border:1px solid #444;">{cid}</td></tr>'
+                right_html += '</table>'
+                st.markdown(right_html, unsafe_allow_html=True)
+
+        # 5. Details for developers
+        with st.expander("Details for developers"):
+            with st.expander("Step-by-step requests and responses"):
+                for step in res.steps:
+                    st.markdown(f"**Step {step.step_id}: {step.tool}.{step.endpoint}**")
+                    st.json({"request": step.request, "response": step.response})
+
+            with st.expander("Schema before vs after drift"):
+                col_s, col_l = st.columns(2)
+                with col_s:
+                    st.markdown("**Snapshot**")
+                    st.json(agent_dashboard.jsonable(run_data["snapshot_crm"]))
+                with col_l:
+                    st.markdown("**Live**")
+                    if run_data["live_crm_schema"]:
+                        st.json(agent_dashboard.jsonable(run_data["live_crm_schema"]))
+                    else:
+                        st.info("Clean")
+
+            with st.expander("Event timeline"):
+                import pandas as pd
+                df_log = pd.DataFrame(events)
+                if not df_log.empty:
+                    st.dataframe(df_log[["seq", "kind", "timestamp", "tool", "reason"]].fillna(""), width="stretch", hide_index=True)
+
+        st.caption("This tab resets drift and ground-truth state used by the other tabs.")
 
 
 # =============================================================================
@@ -648,13 +890,13 @@ with tab5:
 
     col_btn_row1, col_btn_row2, _ = st.columns([1, 1, 3])
     with col_btn_row1:
-        if st.button("Prime All 5 Tools", key="tab5_prime_all_btn", use_container_width=True):
+        if st.button("Prime All 5 Tools", key="tab5_prime_all_btn", width="stretch"):
             for t_info in TOOLS.values():
                 strategy_a.prime(t_info["id"])
             st.toast("Primed cache across all 5 mock tools.")
             st.rerun()
     with col_btn_row2:
-        if st.button("Reset Strategy Stats", key="tab5_reset_stats_btn", use_container_width=True):
+        if st.button("Reset Strategy Stats", key="tab5_reset_stats_btn", width="stretch"):
             strategy_a.reset_stats()
             st.toast("Strategy A metrics reset.")
             st.rerun()
@@ -721,9 +963,9 @@ with tab5:
 
         col_act_a, col_act_b = st.columns(2)
         with col_act_a:
-            prime_single_btn = st.button(f"Prime '{t5_selected_tool}' Cache", key="tab5_prime_single", use_container_width=True)
+            prime_single_btn = st.button(f"Prime '{t5_selected_tool}' Cache", key="tab5_prime_single", width="stretch")
         with col_act_b:
-            test_precall_btn = st.button("Run pre_call() Check", type="primary", key="tab5_run_precall", use_container_width=True)
+            test_precall_btn = st.button("Run pre_call() Check", type="primary", key="tab5_run_precall", width="stretch")
 
         if prime_single_btn:
             strategy_a.prime(t5_tool_id)
@@ -990,7 +1232,7 @@ with tab5:
         {"Drift Type": "D5 — Silent Null Response", "CRM": "⚪ Blind Spot", "Payment": "⚪ Blind Spot", "Weather": "⚪ Blind Spot", "Search": "⚪ Blind Spot", "Email": "⚪ Blind Spot", "Schema Visible": "No", "Expected Detector": "Strategy B / C"},
         {"Drift Type": "D6 — Endpoint Deprecation", "CRM": "🟢 Detected", "Payment": "🟢 Detected", "Weather": "🟢 Detected", "Search": "🟢 Detected", "Email": "🟢 Detected", "Schema Visible": "Yes", "Expected Detector": "Strategy A"},
     ]
-    st.dataframe(matrix_data, use_container_width=True, hide_index=True)
+    st.dataframe(matrix_data, width="stretch", hide_index=True)
 
     run_sweep_btn = st.button("Run Live 30-Cell Catalog Sweep", type="secondary", key="tab5_sweep_btn")
 
@@ -1039,4 +1281,4 @@ with tab5:
             f"**{detected_count}/15** structural drifts detected, "
             f"**{blind_count}/15** semantic drifts correctly recognized as schema-invisible."
         )
-        st.dataframe(sweep_cached, use_container_width=True, hide_index=True)
+        st.dataframe(sweep_cached, width="stretch", hide_index=True)
